@@ -782,6 +782,14 @@ kernel void kernel_silu_4(
     dst[tpig] = x / (1.0f + exp(-x));
 }
 
+kernel void kernel_elu(
+        device const float * src0,
+        device       float * dst,
+        uint tpig[[thread_position_in_grid]]) {
+    device const float & x = src0[tpig];
+    dst[tpig] = (x > 0.0f) ? x : (exp(x) - 1.0f);
+}
+
 kernel void kernel_sqr(
         device const float * src0,
         device       float * dst,
@@ -2137,20 +2145,34 @@ kernel void kernel_im2col(
         uint3  tgpg[[threadgroups_per_grid]],
         uint3 tpitg[[thread_position_in_threadgroup]],
         uint3   ntg[[threads_per_threadgroup]]) {
-    const int32_t iiw = tgpig[2] * s0 + tpitg[2] * d0 - p0;
-    const int32_t iih = tgpig[1] * s1 + tpitg[1] * d1 - p1;
+//    const int64_t IC = tgpg[0];
+    const int64_t OH = tgpg[1];
+    const int64_t OW = tgpg[2];
 
-    const int32_t offset_dst =
-        (tpitg[0] * tgpg[1] * tgpg[2] + tgpig[1] * tgpg[2] + tgpig[2]) * CHW +
-        (tgpig[0] * (ntg[1] * ntg[2]) + tpitg[1] * ntg[2] + tpitg[2]);
+//    const int64_t N  = ntg[0];
+    const int64_t KH = ntg[1];
+    const int64_t KW = ntg[2];
+
+    const int64_t in  = tpitg[0];
+    const int64_t ikh = tpitg[1];
+    const int64_t ikw = tpitg[2];
+
+    const int64_t iic = tgpig[0];
+    const int64_t ioh = tgpig[1];
+    const int64_t iow = tgpig[2];
+
+    const int64_t iiw = iow*s0 + ikw*d0 - p0;
+    const int64_t iih = ioh*s1 + ikh*d1 - p1;
+
+    const int64_t offset_dst = (in*OH*OW + ioh*OW + iow)*CHW + (iic*(KH*KW) + ikh*KW + ikw);
 
     device T * pdst = (device T *) (dst);
 
     if (iih < 0 || iih >= IH || iiw < 0 || iiw >= IW) {
         pdst[offset_dst] = 0.0f;
     } else {
-        const int32_t offset_src = tpitg[0] * ofs0 + tgpig[0] * ofs1;
-        pdst[offset_dst] = x[offset_src + iih * IW + iiw];
+        const int64_t offset_src = in*ofs0 + iic*ofs1 + iih*IW + iiw;
+        pdst[offset_dst] = x[offset_src];
     }
 }
 
@@ -2201,25 +2223,25 @@ kernel void kernel_im2col_ext(
         uint3  tgpg[[threadgroups_per_grid]],      // tgpg[0] = D x IC x KH x KW, CHW = IC x KH x KW
         uint3 tpitg[[thread_position_in_threadgroup]],
         uint3   ntg[[threads_per_threadgroup]]) {  // [M, 1, 1]
-    const int32_t KHW = KH * KW;             // KHW == ntg[1] * ntg[2], KW == ntg[2]
+    const int64_t KHW = KH * KW;             // KHW == ntg[1] * ntg[2], KW == ntg[2]
 
-    const int32_t d = tgpig[0] / CHW;
-    const int32_t chw = tgpig[0] % CHW;
-    const int32_t tgpig_0 = chw / KHW;  // 0 ~ (IC - 1)
-    const int32_t HW = tgpig[0] % KHW;
+    const int64_t d = tgpig[0] / CHW;
+    const int64_t chw = tgpig[0] % CHW;
+    const int64_t tgpig_0 = chw / KHW;  // 0 ~ (IC - 1)
+    const int64_t HW = tgpig[0] % KHW;
 
-    const int32_t tpitg_0 = (d * ntg[0]) + tpitg[0];
+    const int64_t tpitg_0 = (d * ntg[0]) + tpitg[0];
     if (tpitg_0 >= N) {
         return;
     }
 
-    const int32_t tpitg_1 = HW / KW;
-    const int32_t tpitg_2 = HW % KW;
+    const int64_t tpitg_1 = HW / KW;
+    const int64_t tpitg_2 = HW % KW;
 
-    const int32_t iiw = tgpig[2] * s0 + tpitg_2 * d0 - p0;
-    const int32_t iih = tgpig[1] * s1 + tpitg_1 * d1 - p1;
+    const int64_t iiw = tgpig[2] * s0 + tpitg_2 * d0 - p0;
+    const int64_t iih = tgpig[1] * s1 + tpitg_1 * d1 - p1;
 
-    const int32_t offset_dst =
+    const int64_t offset_dst =
         (tpitg_0 * tgpg[1] * tgpg[2] + tgpig[1] * tgpg[2] + tgpig[2]) * CHW +
         (tgpig_0 * KHW + tpitg_1 * KW + tpitg_2);
 
@@ -2228,7 +2250,7 @@ kernel void kernel_im2col_ext(
     if (iih < 0 || iih >= IH || iiw < 0 || iiw >= IW) {
         pdst[offset_dst] = 0.0f;
     } else {
-        const int32_t offset_src = tpitg_0 * ofs0 + tgpig_0 * ofs1;
+        const int64_t offset_src = tpitg_0 * ofs0 + tgpig_0 * ofs1;
         pdst[offset_dst] = x[offset_src + iih * IW + iiw];
     }
 }
@@ -5425,12 +5447,12 @@ kernel void kernel_mul_mm(
     const int im = tgpig.z;
 
     // if this block is of 64x32 shape or smaller
-    short n_rows = (args.ne0 - r0*BLOCK_SIZE_M < BLOCK_SIZE_M) ? (args.ne0 - r0*BLOCK_SIZE_M) : BLOCK_SIZE_M;
-    short n_cols = (args.ne1 - r1*BLOCK_SIZE_N < BLOCK_SIZE_N) ? (args.ne1 - r1*BLOCK_SIZE_N) : BLOCK_SIZE_N;
+    const short n_rows = (args.ne0 - r0*BLOCK_SIZE_M < BLOCK_SIZE_M) ? (args.ne0 - r0*BLOCK_SIZE_M) : BLOCK_SIZE_M;
+    const short n_cols = (args.ne1 - r1*BLOCK_SIZE_N < BLOCK_SIZE_N) ? (args.ne1 - r1*BLOCK_SIZE_N) : BLOCK_SIZE_N;
 
     // a thread shouldn't load data outside of the matrix
-    short thread_row = ((short)tiitg/THREAD_PER_ROW) < n_rows ? ((short)tiitg/THREAD_PER_ROW) : n_rows - 1;
-    short thread_col = ((short)tiitg/THREAD_PER_COL) < n_cols ? ((short)tiitg/THREAD_PER_COL) : n_cols - 1;
+    const short thread_row = ((short)tiitg/THREAD_PER_ROW) < n_rows ? ((short)tiitg/THREAD_PER_ROW) : n_rows - 1;
+    const short thread_col = ((short)tiitg/THREAD_PER_COL) < n_cols ? ((short)tiitg/THREAD_PER_COL) : n_cols - 1;
 
     simdgroup_T8x8     ma[4];
     simdgroup_float8x8 mb[2];
@@ -5445,20 +5467,23 @@ kernel void kernel_mul_mm(
     const int i12 = im%args.ne12;
     const int i13 = im/args.ne12;
 
-    uint64_t offset0 = (i12/args.r2)*args.nb02 + (i13/args.r3)*args.nb03;
-    short    offset1 = il/nl;
+    const uint64_t offset0 = (i12/args.r2)*args.nb02 + (i13/args.r3)*args.nb03;
+    const short    offset1 = il/nl;
 
-    device const block_q * x = (device const block_q *)(src0 + (r0*BLOCK_SIZE_M + thread_row)*args.nb01 + offset0) + offset1;
+    device const block_q * x = (device const block_q *)(src0
+        + args.nb01*(r0*BLOCK_SIZE_M + thread_row) + offset0) + offset1;
+
     device const float   * y = (device const float   *)(src1
         + args.nb13*i13
         + args.nb12*i12
-        + args.nb11*(r1 * BLOCK_SIZE_N + thread_col)
+        + args.nb11*(r1*BLOCK_SIZE_N + thread_col)
         + args.nb10*(BLOCK_SIZE_K / THREAD_PER_COL * (tiitg % THREAD_PER_COL)));
 
     for (int loop_k = 0; loop_k < args.ne00; loop_k += BLOCK_SIZE_K) {
         // load data and store to threadgroup memory
         T4x4 temp_a;
         dequantize_func(x, il, temp_a);
+
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         #pragma unroll(16)
@@ -5468,44 +5493,46 @@ kernel void kernel_mul_mm(
             +                     (tiitg/THREAD_PER_ROW)%8  + (i&7)*8) = temp_a[i/4][i%4];
         }
 
-        *(threadgroup float2x4 *)(sb + (tiitg % THREAD_PER_COL)*8*32 + 8*(tiitg/THREAD_PER_COL)) = *((device float2x4 *) y);
+        *(threadgroup float2x4 *)(sb + 32*8*(tiitg%THREAD_PER_COL) + 8*(tiitg/THREAD_PER_COL)) = *((device float2x4 *) y);
 
         il = (il + 2 < nl) ? il + 2 : il % 2;
-        x  = (il < 2) ? x + (2+nl-1)/nl : x;
+        x  = (il < 2) ? x + (2 + nl - 1)/nl : x;
         y += BLOCK_SIZE_K;
 
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         // load matrices from threadgroup memory and conduct outer products
-        threadgroup T     * lsma = (sa + THREAD_MAT_M*SG_MAT_SIZE*(sgitg%2));
-        threadgroup float * lsmb = (sb + THREAD_MAT_N*SG_MAT_SIZE*(sgitg/2));
+        threadgroup const T     * lsma = (sa + THREAD_MAT_M*SG_MAT_SIZE*(sgitg%2));
+        threadgroup const float * lsmb = (sb + THREAD_MAT_N*SG_MAT_SIZE*(sgitg/2));
 
         #pragma unroll(4)
-        for (short ik = 0; ik < BLOCK_SIZE_K / 8; ik++) {
+        for (short ik = 0; ik < BLOCK_SIZE_K/8; ik++) {
             #pragma unroll(4)
             for (short i = 0; i < 4; i++) {
                 simdgroup_load(ma[i], lsma + SG_MAT_SIZE * i);
             }
+
             simdgroup_barrier(mem_flags::mem_none);
+
             #pragma unroll(2)
             for (short i = 0; i < 2; i++) {
                 simdgroup_load(mb[i], lsmb + SG_MAT_SIZE * i);
             }
 
-            lsma += BLOCK_SIZE_M/SG_MAT_ROW * SG_MAT_SIZE;
-            lsmb += BLOCK_SIZE_N/SG_MAT_ROW * SG_MAT_SIZE;
-
             #pragma unroll(8)
             for (short i = 0; i < 8; i++){
                 simdgroup_multiply_accumulate(mc[i], mb[i/4], ma[i%4], mc[i]);
             }
+
+            lsma += (BLOCK_SIZE_M/SG_MAT_ROW)*SG_MAT_SIZE;
+            lsmb += (BLOCK_SIZE_N/SG_MAT_ROW)*SG_MAT_SIZE;
         }
     }
 
     if ((r0 + 1) * BLOCK_SIZE_M <= args.ne0 && (r1 + 1) * BLOCK_SIZE_N <= args.ne1) {
         device float * C = (device float *) dst +
-            (BLOCK_SIZE_M * r0 + 32 * (sgitg &  1)) + \
-            (BLOCK_SIZE_N * r1 + 16 * (sgitg >> 1)) * args.ne0 + im*args.ne1*args.ne0;
+            (BLOCK_SIZE_M * r0 + 32*(sgitg &  1)) + \
+            (BLOCK_SIZE_N * r1 + 16*(sgitg >> 1)) * args.ne0 + im*args.ne1*args.ne0;
 
         for (short i = 0; i < 8; i++) {
             simdgroup_store(mc[i], C + 8 * (i%4) + 8 * args.ne0 * (i/4), args.ne0);
@@ -5514,7 +5541,7 @@ kernel void kernel_mul_mm(
         // block is smaller than 64x32, we should avoid writing data outside of the matrix
         threadgroup_barrier(mem_flags::mem_threadgroup);
         threadgroup float * temp_str = ((threadgroup float *) shmem) \
-                                      + 32 * (sgitg&1) + (16 * (sgitg>>1))*BLOCK_SIZE_M;
+                                     + 32*(sgitg&1) + (16*(sgitg >> 1))*BLOCK_SIZE_M;
         for (short i = 0; i < 8; i++) {
             simdgroup_store(mc[i], temp_str + 8*(i%4) + 8*BLOCK_SIZE_M*(i/4), BLOCK_SIZE_M);
         }
