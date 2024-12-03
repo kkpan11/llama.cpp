@@ -33,6 +33,7 @@ else()
 endif()
 
 option(BUILD_SHARED_LIBS "ggml: build shared libraries" ${BUILD_SHARED_LIBS_DEFAULT})
+option(GGML_BACKEND_DL   "ggml: build backends as dynamic libraries (requires BUILD_SHARED_LIBS)" OFF)
 
 #
 # option list
@@ -95,6 +96,7 @@ option(GGML_CPU_HBM     "ggml: use memkind for CPU HBM" OFF)
 option(GGML_CPU_AARCH64 "ggml: use runtime weight conversion of Q4_0 to Q4_X_X" ON)
 
 option(GGML_AVX         "ggml: enable AVX"              ${INS_ENB})
+option(GGML_AVX_VNNI    "ggml: enable AVX-VNNI"         OFF)
 option(GGML_AVX2        "ggml: enable AVX2"             ${INS_ENB})
 option(GGML_AVX512      "ggml: enable AVX512"           OFF)
 option(GGML_AVX512_VBMI "ggml: enable AVX512-VBMI"      OFF)
@@ -109,6 +111,7 @@ if (NOT MSVC)
 endif()
 option(GGML_LASX        "ggml: enable lasx"             ON)
 option(GGML_LSX         "ggml: enable lsx"              ON)
+option(GGML_RVV         "ggml: enable rvv"              ON)
 option(GGML_SVE         "ggml: enable SVE"              OFF)
 
 if (WIN32)
@@ -159,11 +162,12 @@ set   (GGML_METAL_MACOSX_VERSION_MIN "" CACHE STRING
 set   (GGML_METAL_STD "" CACHE STRING       "ggml: metal standard version (-std flag)")
 option(GGML_OPENMP                          "ggml: use OpenMP"                                ON)
 option(GGML_RPC                             "ggml: use RPC"                                   OFF)
-option(GGML_AMX                             "ggml: use AMX"                                   OFF)
 option(GGML_SYCL                            "ggml: use SYCL"                                  OFF)
 option(GGML_SYCL_F16                        "ggml: use 16 bit floats for sycl calculations"   OFF)
 set   (GGML_SYCL_TARGET "INTEL" CACHE STRING
                                             "ggml: sycl target device")
+set   (GGML_SYCL_DEVICE_ARCH "" CACHE STRING
+                                            "ggml: sycl device architecture")
 
 # extra artifacts
 option(GGML_BUILD_TESTS    "ggml: build tests"    ${GGML_STANDALONE})
@@ -233,12 +237,8 @@ set_target_properties(ggml PROPERTIES PUBLIC_HEADER "${GGML_PUBLIC_HEADERS}")
 #if (GGML_METAL)
 #    set_target_properties(ggml PROPERTIES RESOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/ggml-metal.metal")
 #endif()
-install(TARGETS ggml PUBLIC_HEADER)
-
-if (BUILD_SHARED_LIBS)
-    install(TARGETS ggml      LIBRARY)
-    install(TARGETS ggml-base LIBRARY)
-endif()
+install(TARGETS ggml LIBRARY PUBLIC_HEADER)
+install(TARGETS ggml-base LIBRARY)
 
 # FIXME: this should be done in the backend cmake files
 if (GGML_METAL)
